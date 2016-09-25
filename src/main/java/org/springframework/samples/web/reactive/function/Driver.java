@@ -16,71 +16,87 @@
 
 package org.springframework.samples.web.reactive.function;
 
-import org.apache.catalina.Context;
-import org.apache.catalina.LifecycleException;
-import org.apache.catalina.startup.Tomcat;
-import reactor.ipc.netty.http.HttpServer;
-
+import org.springframework.core.ResolvableType;
 import org.springframework.http.server.reactive.HttpHandler;
 import org.springframework.http.server.reactive.ReactorHttpHandlerAdapter;
-import org.springframework.http.server.reactive.ServletHttpHandlerAdapter;
+import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.Response;
 import org.springframework.web.reactive.function.RouterFunction;
+import org.springframework.web.reactive.function.RouterFunctions;
+import reactor.core.publisher.Mono;
+import reactor.ipc.netty.http.HttpServer;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.springframework.http.MediaType.APPLICATION_JSON;
-import static org.springframework.web.reactive.function.RequestPredicates.GET;
-import static org.springframework.web.reactive.function.RequestPredicates.POST;
-import static org.springframework.web.reactive.function.RequestPredicates.accept;
-import static org.springframework.web.reactive.function.RequestPredicates.contentType;
-import static org.springframework.web.reactive.function.RouterFunctions.route;
+import static org.springframework.web.reactive.function.BodyInserters.fromObject;
+import static org.springframework.web.reactive.function.BodyInserters.fromPublisher;
+import static org.springframework.web.reactive.function.RequestPredicates.*;
 import static org.springframework.web.reactive.function.RouterFunctions.toHttpHandler;
 
 public class Driver {
 
-	public static final String HOST = "localhost";
+    public static final String HOST = "localhost";
 
-	public static final int PORT = 8080;
+    public static final int PORT = 8080;
 
-	public static void main(String[] args) throws Exception {
-		Driver driver = new Driver();
-		driver.startReactorServer();
-//		driver.startTomcatServer();
+    public static void main(String[] args) throws Exception {
+        Driver driver = new Driver();
+        driver.startReactorServer();
 
-		System.out.println("Press ENTER to exit.");
-		System.in.read();
-	}
+        System.out.println("Press ENTER to exit.");
+        System.in.read();
+    }
 
-	public RouterFunction<?> routingFunction() {
-		PersonRepository repository = new DummyPersonRepository();
-		PersonHandler handler = new PersonHandler(repository);
+    public RouterFunction<?> routingFunction() {
+        PersonHandler handler = new PersonHandler(new DummyPersonRepository());
+        BlogPostService service = new BlogPostService();
 
-		return route(GET("/person/{id}"), handler::getPerson)
-				.and(route(GET("/person").and(accept(APPLICATION_JSON)),
-						handler::listPeople))
-				.and(route(POST("/person").and(contentType(APPLICATION_JSON)),
-						handler::createPerson));
-	}
+        return RouterFunctions.route(GET("/person/{id}"), handler::getPerson)
+                .and(RouterFunctions.route(GET("/person").and(accept(APPLICATION_JSON)),
+                        handler::listPeople))
+                .and(RouterFunctions.route(POST("/person").and(contentType(APPLICATION_JSON)),
+                        handler::createPerson))
+                .and(RouterFunctions.route(GET("/user/{id}"), service::getBlogPostsForUser));
+    }
 
-	public void startReactorServer() throws InterruptedException {
-		RouterFunction<?> route = routingFunction();
-		HttpHandler httpHandler = toHttpHandler(route);
 
-		ReactorHttpHandlerAdapter adapter = new ReactorHttpHandlerAdapter(httpHandler);
-		HttpServer server = HttpServer.create(HOST, PORT);
-		server.startAndAwait(adapter);
-	}
+    RouterFunction<String> helloWorldRoute =
+            request -> {
+                if (request.path().equals("/hello-world")) {
+                    return Optional.of(r -> Response.ok().body(BodyInserters.fromObject("Hello World"))
+                    );
+                } else {
+                    return Optional.empty();
+                }
+            };
 
-	public void startTomcatServer() throws LifecycleException {
-		RouterFunction<?> route = routingFunction();
-		HttpHandler httpHandler = toHttpHandler(route);
+    public void startReactorServer() throws InterruptedException {
+        RouterFunction<?> route = routingFunction();
+        HttpHandler httpHandler = toHttpHandler(route);
 
-		Tomcat tomcatServer = new Tomcat();
-		tomcatServer.setHostname(HOST);
-		tomcatServer.setPort(PORT);
-		Context rootContext = tomcatServer.addContext("", System.getProperty("java.io.tmpdir"));
-		ServletHttpHandlerAdapter servlet = new ServletHttpHandlerAdapter(httpHandler);
-		Tomcat.addServlet(rootContext, "httpHandlerServlet", servlet);
-		rootContext.addServletMapping("/", "httpHandlerServlet");
-		tomcatServer.start();
-	}
+        ReactorHttpHandlerAdapter adapter = new ReactorHttpHandlerAdapter(httpHandler);
+        HttpServer server = HttpServer.create(HOST, PORT);
+        server.startAndAwait(adapter);
+    }
 
+    private class BlogPostService {
+        Response<Mono> getBlogPostsForUser(Long id) {
+            Map<String, Serializable> map = new LinkedHashMap<>();
+            ArrayList<String> posts = new ArrayList<>();
+
+            posts.add("Post1");
+            posts.add("Post2");
+
+            Mono myMono = Mono.when(
+                    mono1 -> map.put("user", "Stephan"),
+                    mono2 -> map.put("posts", posts)).awaitOnSubscribe();
+
+            return Response.ok().build(BodyInserters.fromPublisher(myMono, Map.class));
+        }
+    }
 }
